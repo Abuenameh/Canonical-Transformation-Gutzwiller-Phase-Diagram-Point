@@ -5,6 +5,66 @@
  *      Author: Abuenameh
  */
 
+#include "L-BFGS/cutil_inline.h"
+#include "L-BFGS/lbfgsbcuda.h"
+#include "L-BFGS/lbfgsb.h"
+#include "cudacomplex.hpp"
+#include "phasediagram.hpp"
+
+__global__ void energyKer(real* x, real* f_dev, real* g_dev, real* U,
+		real* J, real mu, real* norm2) {
+
+	if(threadIdx.x > 0) {
+		return;
+	}
+
+	const int i = blockIdx.x;
+	if (i >= L) {
+		return;
+	}
+
+	//	__shared__ doublecomplex f[L*dim];
+		__shared__ doublecomplex fi[5*dim];
+		__shared__ doublecomplex* f[5];
+
+	int j1 = mod(i - 1);
+	int j2 = mod(i + 1);
+	int k1 = mod(i - 2);
+	int k2 = mod(i + 2);
+
+	f[0] = &fi[k1*dim];
+	f[1] = &fi[j1*dim];
+	f[2] = &fi[i*dim];
+	f[3] = &fi[j2*dim];
+	f[4] = &fi[k2*dim];
+
+	for(int n = 0; n <= nmax; n++) {
+				f[0][n] = make_doublecomplex(x[2*(k1*dim+n)], x[2*(k1*dim+n)+1]);
+				f[1][n] = make_doublecomplex(x[2*(j1*dim+n)], x[2*(j1*dim+n)+1]);
+				f[2][n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+				f[3][n] = make_doublecomplex(x[2*(j2*dim+n)], x[2*(j2*dim+n)+1]);
+				f[4][n] = make_doublecomplex(x[2*(k2*dim+n)], x[2*(k2*dim+n)+1]);
+//		f[i*dim+n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+//		f[j1*dim+n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+//		f[j2*dim+n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+//		f[k1*dim+n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+//		f[k2*dim+n] = make_doublecomplex(x[2*(i*dim+n)], x[2*(i*dim+n)+1]);
+	}
+
+//	for(int i = 0; i < L; i++) {
+//		for(int n = 0; n <= nmax; n++) {
+//			f[i*dim+n] = make_doublecomplex(x[2*(i*dim+n)])
+//		}
+//	}
+//
+//	const doublecomplex * f[L];
+//	for (int i = 0; i < L; i++) {
+//		f[i] = reinterpret_cast<const doublecomplex*>(&x[2 * i * dim]);
+//	}
+
+}
+
+#ifdef UNDEF
 __global__ void Efuncker(unsigned ndim, const double *x, double* fval,
 	double *grad, void *data) {
 
@@ -500,6 +560,6 @@ __global__ void Efuncker(unsigned ndim, const double *x, double* fval,
 //	return Ec.real();
 }
 
-
+#endif
 
 
