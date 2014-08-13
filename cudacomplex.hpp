@@ -96,14 +96,14 @@ template <typename T2, typename T> struct ALIGN(8) _cudacomplex {
     T2 value;
 
     // assignment of a scalar to complex
-    _cudacomplex<T2, T>& operator=(const T REF(a)) {
+    M_HOSTDEVICE _cudacomplex<T2, T>& operator=(const T REF(a)) {
         value.x = a;
         value.y = 0;
         return *this;
     };
 
     // assignment of a pair of Ts to complex
-    _cudacomplex<T2, T>& operator=(const T ARRAYREF(a, 2)) {
+    M_HOSTDEVICE _cudacomplex<T2, T>& operator=(const T ARRAYREF(a, 2)) {
         value.x = a[0];
         value.y = a[1];
         return *this;
@@ -123,6 +123,11 @@ template <typename T2, typename T> struct ALIGN(8) _cudacomplex {
         _cudacomplex<T2, T> result = {
             { value.x + b.value.x, value.y + b.value.y}};
         return result;
+    }
+
+    M_HOSTDEVICE _cudacomplex<T2, T>& operator+=(const _cudacomplex<T2, T> REF(b)) {
+        *this = *this + b;
+        return *this;
     }
 
     // add scalar to complex
@@ -326,7 +331,7 @@ HOSTDEVICE doublecomplex make_doublecomplex(double a, double b)
 }
 
 template<class T2, class T>
-HOSTDEVICE T norm(_cudacomplex<T2, T> c)
+HOSTDEVICE T norm2(_cudacomplex<T2, T> c)
 {
     return c.value.x * c.value.x + c.value.y * c.value.y;
 }
