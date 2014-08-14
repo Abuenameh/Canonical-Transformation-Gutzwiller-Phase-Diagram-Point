@@ -144,6 +144,11 @@ template <typename T2, typename T> struct ALIGN(8) _cudacomplex {
         return result;
     }
 
+    M_HOSTDEVICE _cudacomplex<T2, T>& operator-=(const _cudacomplex<T2, T> REF(b)) {
+        *this = *this - b;
+        return *this;
+    }
+
     // negate a complex number
     M_HOSTDEVICE _cudacomplex<T2, T> operator-() const {
         _cudacomplex<T2, T> result = {

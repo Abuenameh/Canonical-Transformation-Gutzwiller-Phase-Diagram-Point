@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "L-BFGS/lbfgsb.h"
+#include "L-BFGS/cutil_inline.h"
 
 #include "phasediagram.hpp"
 
@@ -94,6 +95,10 @@ int main() {
 	memAlloc<real>(&J, L);
 	memAlloc<real>(&U, L);
 	vector<real> J_host(L, 0.1), U_host(L, 1);
+	for(int i = 0; i < L; i++) {
+		J_host[i] = 0.1*(i+1);
+		U_host[i] = 0.2*(i+1)*(i+1);
+	}
 	memCopy(J, J_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
 	memCopy(U, U_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
 
@@ -108,6 +113,12 @@ int main() {
 //	vector<real> norm2s_host(L, 1);
 	memCopy(norm2s, norm2_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
 
+//	real* x_host2 = new real[2*L*dim];
+//	memCopy(x_host2, x, 2*L*dim*sizeof(real), cudaMemcpyDeviceToHost);
+//	for(int j = 0; j < L*dim; j++) {
+//		printf("%f %f ", x_host2[2*j], x_host2[2*j+1]);
+//	}
+//	printf("\n");
 	printf("Before energy\n");
 	energy(x, f, g, U, J, 0.5, norm2s);
 	printf("After energy\n");
