@@ -29,10 +29,10 @@ __device__ void atomicAdd(doublecomplex* address, doublecomplex val) {
 	atomicAdd(&address->imag(), val.imag());
 }
 
-__global__ void initProbKer(real* x, int* nbd, real* l, real* u) {
+__global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u) {
 	const int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (i >= 2 * L * dim) {
+	if (i >= ndim) {
 		return;
 	}
 
@@ -52,11 +52,11 @@ __global__ void initProbKer(real* x, int* nbd, real* l, real* u) {
 //	u[i] = 100;
 }
 
-__global__ void initProbKer(real* x, int* nbd, real* l, real* u, int j,
+__global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u, int j,
 	real dx) {
 	const int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (i >= 2 * L * dim) {
+	if (i >= ndim) {
 		return;
 	}
 
@@ -68,12 +68,13 @@ __global__ void initProbKer(real* x, int* nbd, real* l, real* u, int j,
 		x[j] += dx;
 }
 
-extern void initProb(real* x, int* nbd, real* l, real* u) {
-	initProbKer<<<lbfgsbcuda::iDivUp(L * dim, 64), 64>>>(x, nbd, l, u);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u) {
+	initProbKer<<<lbfgsbcuda::iDivUp(ndim, 64), 64>>>(ndim, x, nbd, l, u);
+//	initProbKer<<<1,2*L*dim>>>(x, nbd, l, u);
 }
 
-extern void initProb(real* x, int* nbd, real* l, real* u, int i, real dx) {
-	initProbKer<<<lbfgsbcuda::iDivUp(L * dim, 64), 64>>>(x, nbd, l, u, i, dx);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i, real dx) {
+	initProbKer<<<lbfgsbcuda::iDivUp(ndim, 64), 64>>>(ndim, x, nbd, l, u, i, dx);
 }
 
 __global__ void energyfKer(real* x, real* norm2, Parameters parms,
@@ -102,6 +103,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			for (int m = 0; m <= nmax; m++) {
 				f[j][m] = make_doublecomplex(x[2 * (k + m)],
 					x[2 * (k + m) + 1]);
+				printf("f[%d][%d] = %f, %f\n", j, m, f[j][m].real(), f[j][m].imag());
 			}
 			U[j] = parms.U[j];
 			J[j] = parms.J[j];
@@ -139,7 +141,6 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			E2j2 += 0.5 * J[i] * J[i] * g(n, n) * g(n - 1, n + 1) * ~f[i][n + 1]
 				* ~f[j2][n - 1] * f[i][n - 1] * f[j2][n + 1]
 				* (1 / eps(U, i, j2, n, n) - 1 / eps(U, i, j2, n - 1, n + 1));
-			printf("E2 eps:%d: %f, %f, %f, %f\n",n, eps(U, i, j1, n, n), eps(U, i, j1, n - 1, n + 1), eps(U, i, j2, n, n),eps(U, i, j2, n - 1, n + 1));
 		}
 
 		for (int m = 1; m <= nmax; m++) {
@@ -152,7 +153,6 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 					* g(m - 1, n + 1)
 					* (~f[i][n + 1] * ~f[j2][m - 1] * f[i][n + 1] * f[j2][m - 1]
 						- ~f[i][n] * ~f[j2][m] * f[i][n] * f[j2][m]);
-				printf("E3 eps:%d,%d: %f, %f\n",n,m, eps(U, i, j1, n, m), eps(U, i, j2, n, m));
 			}
 		}
 
@@ -181,7 +181,6 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			E4j2k2 -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n - 1, n + 1))
 				* g(n, n) * g(n - 1, n + 1) * ~f[i][n] * ~f[j2][n - 1]
 				* ~f[k2][n + 1] * f[i][n - 1] * f[j2][n + 1] * f[k2][n];
-			printf("E4 eps:%d: %f, %f, %f, %f\n",n, eps(U, i, j1, n, n), eps(U, i, j2, n, n), eps(U, i, j1, n - 1, n + 1), eps(U, i, j2, n - 1, n + 1));
 		}
 
 		for (int m = 1; m <= nmax; m++) {
@@ -210,7 +209,6 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 				E5j2k2 -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n, m)) * g(n, m)
 					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m] * ~f[k2][n]
 					* f[i][n] * f[j2][m] * f[k2][n + 1];
-printf("E5 eps:%d,%d: %f, %f\n",n,m, eps(U, i, j1, n, m), eps(U, i, j2, n, m));
 			}
 		}
 	}
@@ -243,8 +241,8 @@ printf("E5 eps:%d,%d: %f, %f\n",n,m, eps(U, i, j1, n, m), eps(U, i, j2, n, m));
 	atomicAdd(&Es->E5j1k1[i], E5j1k1);
 	atomicAdd(&Es->E5j2k2[i], E5j2k2);
 
-//	printf("%f, %f, %f, %f, %f, %f, %f\n", E0.real(), E1j1.real(), E1j2.real(), E2j1.real(), E2j2.real(), E3j1.real(), E3j2.real());
-//	printf("%f, %f, %f, %f, %f, %f\n", E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
+	printf("%d: %f, %f, %f, %f, %f, %f, %f\n", i, E0.real(), E1j1.real(), E1j2.real(), E2j1.real(), E2j2.real(), E3j1.real(), E3j2.real());
+	printf("%d: %f, %f, %f, %f, %f, %f\n", i, E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
 }
 
 __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, real* g_dev) {

@@ -10,7 +10,7 @@
 
 #include "cudacomplex.hpp"
 
-#define L 3
+#define L 10
 #define nmax 7
 #define dim (nmax+1)
 

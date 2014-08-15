@@ -32,8 +32,8 @@ Estruct* Es;
 Workspace work;
 Parameters parms;
 
-extern void initProb(real* x, int* nbd, real* l, real* u);
-extern void initProb(real* x, int* nbd, real* l, real* u, int i, real dx);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i, real dx);
 
 void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, Workspace& work);
 
@@ -86,7 +86,7 @@ int main() {
 //	for(int i = 0; i < 10; i++) {
 
 	printf("Before initProb\n");
-	initProb(x, nbd, l, u);
+	initProb(ndim, x, nbd, l, u);
 	memCopy(x_host.data(), x, ndim*sizeof(real), cudaMemcpyDeviceToHost);
 	CudaCheckError();
 
@@ -99,8 +99,8 @@ int main() {
 	CudaSafeMemAllocCall(memAlloc<real>(&U, L));
 	vector<real> J_host(L, 0.1), U_host(L, 1);
 	for(int i = 0; i < L; i++) {
-		J_host[i] = 0.1*(i+1)*(i+2);
-		U_host[i] = 0.2*(i+1)*(7*i+3)*(5*i*i+2);
+		J_host[i] = 0.01;//0.1*(i+1)*(i+2);
+		U_host[i] = 1;//0.2*(i+1)*(7*i+3)*(5*i*i+2);
 	}
 	memCopy(J, J_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
 	CudaCheckError();
