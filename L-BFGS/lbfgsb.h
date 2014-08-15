@@ -61,12 +61,17 @@ inline int memAlloc(T** ptr, size_t length) {
 template<class T>
 inline int memAllocHost(T** ptr, T** ptr_dev, size_t length) {
 	void* ptr_;
-	cudaHostAlloc(&ptr_, length * sizeof(T), cudaHostAllocMapped);
+//	printf("Here 0\n");
+	cudaHostAlloc(&ptr_, length /** sizeof(T)*/, cudaHostAllocMapped);
+//	printf("Here 1\n");
 	if(ptr_dev)
 		cudaHostGetDevicePointer((void**)ptr_dev, ptr_, 0);
+//	printf("Here 2\n");
 	*ptr = (T*)ptr_;
+//	printf("Here 32: %x\n", ptr);
 
 	memset(*ptr, 0, length);
+//	printf("Here 4\n");
 
 	if(ptr_ != NULL)
 		return 0;

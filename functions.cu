@@ -46,8 +46,10 @@ __global__ void initProbKer(real* x, int* nbd, real* l, real* u) {
 //		scale = sqrt(51 / 2.);
 //	if (k == 2)
 //		scale = sqrt(71 / 2.);
-	x[i] = (1 / sqrt(2.0 * dim)) * (k + n) / scale;
+	x[i] = (1 / sqrt(2.0 * dim));// * (k + n) / scale;
 	nbd[i] = 0;
+//	l[i] = -100;
+//	u[i] = 100;
 }
 
 __global__ void initProbKer(real* x, int* nbd, real* l, real* u, int j,
@@ -137,6 +139,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			E2j2 += 0.5 * J[i] * J[i] * g(n, n) * g(n - 1, n + 1) * ~f[i][n + 1]
 				* ~f[j2][n - 1] * f[i][n - 1] * f[j2][n + 1]
 				* (1 / eps(U, i, j2, n, n) - 1 / eps(U, i, j2, n - 1, n + 1));
+			printf("E2 eps:%d: %f, %f, %f, %f\n",n, eps(U, i, j1, n, n), eps(U, i, j1, n - 1, n + 1), eps(U, i, j2, n, n),eps(U, i, j2, n - 1, n + 1));
 		}
 
 		for (int m = 1; m <= nmax; m++) {
@@ -149,6 +152,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 					* g(m - 1, n + 1)
 					* (~f[i][n + 1] * ~f[j2][m - 1] * f[i][n + 1] * f[j2][m - 1]
 						- ~f[i][n] * ~f[j2][m] * f[i][n] * f[j2][m]);
+				printf("E3 eps:%d,%d: %f, %f\n",n,m, eps(U, i, j1, n, m), eps(U, i, j2, n, m));
 			}
 		}
 
@@ -177,6 +181,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			E4j2k2 -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n - 1, n + 1))
 				* g(n, n) * g(n - 1, n + 1) * ~f[i][n] * ~f[j2][n - 1]
 				* ~f[k2][n + 1] * f[i][n - 1] * f[j2][n + 1] * f[k2][n];
+			printf("E4 eps:%d: %f, %f, %f, %f\n",n, eps(U, i, j1, n, n), eps(U, i, j2, n, n), eps(U, i, j1, n - 1, n + 1), eps(U, i, j2, n - 1, n + 1));
 		}
 
 		for (int m = 1; m <= nmax; m++) {
@@ -205,6 +210,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 				E5j2k2 -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n, m)) * g(n, m)
 					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m] * ~f[k2][n]
 					* f[i][n] * f[j2][m] * f[k2][n + 1];
+printf("E5 eps:%d,%d: %f, %f\n",n,m, eps(U, i, j1, n, m), eps(U, i, j2, n, m));
 			}
 		}
 	}
@@ -237,6 +243,8 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 	atomicAdd(&Es->E5j1k1[i], E5j1k1);
 	atomicAdd(&Es->E5j2k2[i], E5j2k2);
 
+//	printf("%f, %f, %f, %f, %f, %f, %f\n", E0.real(), E1j1.real(), E1j2.real(), E2j1.real(), E2j2.real(), E3j1.real(), E3j2.real());
+//	printf("%f, %f, %f, %f, %f, %f\n", E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
 }
 
 __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, real* g_dev) {
@@ -628,22 +636,9 @@ __global__ void norm2Ker(real* x, real* norm2s) {
 	}
 }
 
-//__global__ void zero(Estruct* Es) {
-//	memset(Es->E0, 0, L * sizeof(doublecomplex));
-//	memset(Es->E1j1, 0, L * sizeof(doublecomplex));
-//	memset(Es->E1j2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E2j1, 0, L * sizeof(doublecomplex));
-//	memset(Es->E2j2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E3j1, 0, L * sizeof(doublecomplex));
-//	memset(Es->E3j2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E4j1j2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E4j1k1, 0, L * sizeof(doublecomplex));
-//	memset(Es->E4j2k2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E5j1j2, 0, L * sizeof(doublecomplex));
-//	memset(Es->E5j1k1, 0, L * sizeof(doublecomplex));
-//	memset(Es->E5j2k2, 0, L * sizeof(doublecomplex));
-//
-//}
+__global__ void copyfker(doublecomplex* E, real* f) {
+	*f = E->real();
+}
 
 void zero(Estruct* Es_dev) {
 	Estruct Es;
@@ -705,23 +700,6 @@ void freeE(Estruct* Es_dev) {
 	memFree(Es_dev);
 }
 
-/*void allocWorkspace(Workspace** work_dev) {
-	Workspace work;
-	memAlloc<real>(&work->norm2, L);
-
-	memAlloc<Workspace>(work_dev, 1);
-	memCopy(work_dev, &work, sizeof(Workspace), cudaMemcpyHostToDevice);
-}
-
-void freeWorkspace(Workspace*& work_dev) {
-	Workspace work;
-	memCopy(&work, work_dev, sizeof(Workspace), cudaMemcpyDeviceToHost);
-
-	memFree(work.norm2);
-
-	memFree(work_dev);
-}*/
-
 void allocWorkspace(Workspace& work) {
 	memAlloc<real>(&work.norm2, L);
 }
@@ -730,62 +708,21 @@ void freeWorkspace(Workspace& work) {
 	memFree(work.norm2);
 }
 
-void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, Workspace& work/*real* U, real* J, real mu,
-	real* norm2s*/) {
-//	real* x_host = new real[2*L*dim];
-//	memCopy(x_host, x, 2*L*dim*sizeof(real), cudaMemcpyDeviceToHost);
-//	for(int j = 0; j < L*dim; j++) {
-//		printf("%f %f ", x_host[2*j], x_host[2*j+1]);
-//	}
-//	printf("\n");
+void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, Workspace& work) {
 
 	doublecomplex* E_dev;
 	CudaSafeMemAllocCall(memAlloc<doublecomplex>(&E_dev, 1));
 	cudaMemset(E_dev, 0, sizeof(doublecomplex));
 	CudaCheckError();
 
-//	Estruct Es;
-//	memAlloc<doublecomplex>(&Es.E0, L);
-//	memAlloc<doublecomplex>(&Es.E1j1, L);
-//	memAlloc<doublecomplex>(&Es.E1j2, L);
-//	memAlloc<doublecomplex>(&Es.E2j1, L);
-//	memAlloc<doublecomplex>(&Es.E2j2, L);
-//	memAlloc<doublecomplex>(&Es.E3j1, L);
-//	memAlloc<doublecomplex>(&Es.E3j2, L);
-//	memAlloc<doublecomplex>(&Es.E4j1j2, L);
-//	memAlloc<doublecomplex>(&Es.E4j1k1, L);
-//	memAlloc<doublecomplex>(&Es.E4j2k2, L);
-//	memAlloc<doublecomplex>(&Es.E5j1j2, L);
-//	memAlloc<doublecomplex>(&Es.E5j1k1, L);
-//	memAlloc<doublecomplex>(&Es.E5j2k2, L);
-
 	zero(Es);
 	CudaCheckError();
-//	cudaMemset(Es->E0, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E1j1, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E1j2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E2j1, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E2j2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E3j1, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E3j2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E4j1j2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E4j1k1, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E4j2k2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E5j1j2, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E5j1k1, 0, L * sizeof(doublecomplex));
-//	cudaMemset(Es->E5j2k2, 0, L * sizeof(doublecomplex));
-
-//	real* norm2_dev;
-//	memAlloc<real>(&norm2_dev, L);
-
-//	Parameters parms;
-//	parms.U = U;
-//	parms.J = J;
-//	parms.mu = mu;
 
 	norm2Ker<<<1, L>>>(x, work.norm2);
 	CudaCheckError();
 	energyfKer<<<dim, L>>>(x, work.norm2, /*U, J, mu,*/parms, E_dev, Es);
+	CudaCheckError();
+	copyfker<<<1,1>>>(E_dev, f_dev);
 	CudaCheckError();
 	energygKer<<<dim, L>>>(x, work.norm2, parms, Es,g_dev /*U, J, mu,*/);
 	CudaCheckError();
@@ -795,29 +732,15 @@ void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, W
 	printf("E = %f, %f\n", E.real(), E.imag());
 	real* g_host = new real[2 * L * dim];
 	memCopy(g_host, g_dev, 2 * L * dim * sizeof(real), cudaMemcpyDeviceToHost);
-	printf("g: ");
-	for (int i = 0; i < L; i++) {
-		for (int n = 0; n <= nmax; n++) {
-			printf("%f %f, ", g_host[2 * (i * dim + n)],
-				g_host[2 * (i * dim + n) + 1]);
-		}
-	}
-	printf("\n");
+//	printf("g: ");
+//	for (int i = 0; i < L; i++) {
+//		for (int n = 0; n <= nmax; n++) {
+//			printf("%f %f, ", g_host[2 * (i * dim + n)],
+//				g_host[2 * (i * dim + n) + 1]);
+//		}
+//	}
+//	printf("\n");
 
 	memFree(E_dev);
-//	memFree(Es.E0);
-//	memFree(Es.E1j1);
-//	memFree(Es.E1j2);
-//	memFree(Es.E2j1);
-//	memFree(Es.E2j2);
-//	memFree(Es.E3j1);
-//	memFree(Es.E3j2);
-//	memFree(Es.E4j1j2);
-//	memFree(Es.E4j1k1);
-//	memFree(Es.E4j2k2);
-//	memFree(Es.E5j1j2);
-//	memFree(Es.E5j1k1);
-//	memFree(Es.E5j2k2);
-//	memFree(norm2_dev);
 }
 
