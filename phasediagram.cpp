@@ -7,6 +7,7 @@
 
 #include <ctime>
 #include <vector>
+#include <algorithm>
 
 #include "L-BFGS/lbfgsb.h"
 #include "L-BFGS/cutil_inline.h"
@@ -27,21 +28,23 @@ real stpscal;
 real U;
 real J;
 real mu;
+real theta;
 
 Estruct* Es;
 Workspace work;
 Parameters parms;
 
 extern void initProb(int ndim, real* x, int* nbd, real* l, real* u);
-extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i, real dx);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i,
+	real dx);
 
-void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, Workspace& work);
+void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta,
+	Estruct* Es, Workspace& work);
 
 void funcgrad(real* x, real& f, real* g, const cudaStream_t& stream) {
-//	energy(x, f_tb_dev, g, L, nmax, U, J, mu, stream);
-		energy(x, f_tb_dev, g, parms, Es, work);
+	energy(x, f_tb_dev, g, parms, theta, Es, work);
 	f = *f_tb_host;
-	printf("f_tb_host: %f\n", *f_tb_host);
+//	printf("f_tb_host: %f\n", *f_tb_host);
 }
 
 int main() {
@@ -74,7 +77,8 @@ int main() {
 	CudaSafeMemAllocCall(memAlloc<real>(&l, ndim));
 	CudaSafeMemAllocCall(memAlloc<real>(&u, ndim));
 //	printf("Here\n");
-	CudaSafeMemAllocCall(memAllocHost<real>(&f_tb_host, &f_tb_dev, sizeof(real)));
+	CudaSafeMemAllocCall(
+		memAllocHost<real>(&f_tb_host, &f_tb_dev, sizeof(real)));
 
 	vector<real> x_host(ndim);
 	vector<real> norm2_host(L, 0);
@@ -87,7 +91,7 @@ int main() {
 
 	printf("Before initProb\n");
 	initProb(ndim, x, nbd, l, u);
-	memCopy(x_host.data(), x, ndim*sizeof(real), cudaMemcpyDeviceToHost);
+	memCopy(x_host.data(), x, ndim * sizeof(real), cudaMemcpyDeviceToHost);
 	CudaCheckError();
 
 //	printf("f: %.20e\n", *f_tb_host);
@@ -98,27 +102,67 @@ int main() {
 	CudaSafeMemAllocCall(memAlloc<real>(&J, L));
 	CudaSafeMemAllocCall(memAlloc<real>(&U, L));
 	vector<real> J_host(L, 0.1), U_host(L, 1);
-	for(int i = 0; i < L; i++) {
-		J_host[i] = 0.01;//0.1*(i+1)*(i+2);
-		U_host[i] = 1;//0.2*(i+1)*(7*i+3)*(5*i*i+2);
+	std::generate(J_host.begin(), J_host.end(), std::rand);
+	std::generate(U_host.begin(), U_host.end(), std::rand);
+	for (int i = 0; i < L; i++) {
+		J_host[i] = 0.1;//0.00001*(i+1)*(i+2);
+		U_host[i] = 1;//0.0000002*(i+1)*(2*i+1)*(3*i*i+2);
+//		J_host[i] /= RAND_MAX;
+//		J_host[i] /= 10;
+//		U_host[i] /= RAND_MAX;
+//		printf("%f %f\n", J_host[i], U_host[i]);
 	}
-	memCopy(J, J_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
+	memCopy(J, J_host.data(), L * sizeof(real), cudaMemcpyHostToDevice);
 	CudaCheckError();
-	memCopy(U, U_host.data(), L*sizeof(real), cudaMemcpyHostToDevice);
+	memCopy(U, U_host.data(), L * sizeof(real), cudaMemcpyHostToDevice);
 	CudaCheckError();
 
 	parms.J = J;
 	parms.U = U;
 	parms.mu = mu;
 
-		lbfgsbminimize(ndim, 4, x, epsg, epsf, epsx, maxits, nbd, l, u, info);
+	theta = 0;
+
+	lbfgsbminimize(ndim, 4, x, epsg, epsf, epsx, maxits, nbd, l, u, info);
 	printf("info: %d\n", info);
 
-	real* f;
-	CudaSafeMemAllocCall(memAlloc<real>(&f, 1));
-	cudaMemset(f, 0, sizeof(real));
-	real* g;
-	CudaSafeMemAllocCall(memAlloc<real>(&g, 2 * L * dim));
+	real E0 = *f_tb_host;
+	printf("E0: %f\n", *f_tb_host);
+
+	memCopy(x_host.data(), x, ndim * sizeof(real), cudaMemcpyDeviceToHost);
+	printf("f0: ");
+	for (int i = 0; i < ndim; i++) {
+		printf("%f, ", x_host[i]);
+	}
+	printf("\n");
+
+	theta = 0.01;
+
+	lbfgsbminimize(ndim, 4, x, epsg, epsf, epsx, maxits, nbd, l, u, info);
+	printf("info: %d\n", info);
+
+	real Eth = *f_tb_host;
+	printf("Eth: %f\n", *f_tb_host);
+
+	memCopy(x_host.data(), x, ndim * sizeof(real), cudaMemcpyDeviceToHost);
+	printf("fth: ");
+	for (int i = 0; i < ndim; i++) {
+		printf("%f, ", x_host[i]);
+	}
+	printf("\n");
+
+	real Jmean = 0;
+	for(int i = 0; i < L; i++) {
+		Jmean += J_host[i];
+	}
+	Jmean /= L;
+	printf("fs?: %f\n", (Eth-E0)/(Jmean*theta*theta));
+
+//	real* f;
+//	CudaSafeMemAllocCall(memAlloc<real>(&f, 1));
+//	cudaMemset(f, 0, sizeof(real));
+//	real* g;
+//	CudaSafeMemAllocCall(memAlloc<real>(&g, 2 * L * dim));
 
 //	printf("Before energy\n");
 //	energy(x, f, g, parms, Es, work);
@@ -126,11 +170,11 @@ int main() {
 //	printf("After energy\n");
 
 //	memCopy(f_tb_host, f, sizeof(real), cudaMemcpyDeviceToHost);
-	vector<real> g_host(ndim, 0);
-	memCopy(g_host.data(), g, ndim*sizeof(real), cudaMemcpyDeviceToHost);
+//	vector<real> g_host(ndim, 0);
+//	memCopy(g_host.data(), g, ndim * sizeof(real), cudaMemcpyDeviceToHost);
 
-	real f1 = *f_tb_host;
-	printf("f: %f\n", *f_tb_host);
+//	real f1 = *f_tb_host;
+//	printf("f: %f\n", *f_tb_host);
 
 //	real dx = 1e-8;
 //	initProb(x, nbd, l, u, 6, dx);
@@ -139,15 +183,15 @@ int main() {
 //	energy(x, f, g, U, J, 0.5, norm2s);
 //	memCopy(f_tb_host, f, sizeof(real), cudaMemcpyDeviceToHost);
 
-	real f2 = *f_tb_host;
-	printf("f: %f\n", *f_tb_host);
+//	real f2 = *f_tb_host;
+//	printf("f: %f\n", *f_tb_host);
 
-	memCopy(x_host.data(), x, ndim * sizeof(real), cudaMemcpyDeviceToHost);
-	printf("x: ");
-	for (int i = 0; i < ndim; i++) {
-		printf("%f, ", x_host[i]);
-	}
-	printf("\n");
+//	memCopy(x_host.data(), x, ndim * sizeof(real), cudaMemcpyDeviceToHost);
+//	printf("x: ");
+//	for (int i = 0; i < ndim; i++) {
+//		printf("%f, ", x_host[i]);
+//	}
+//	printf("\n");
 
 	memFreeHost(f_tb_host);
 	memFree(x);

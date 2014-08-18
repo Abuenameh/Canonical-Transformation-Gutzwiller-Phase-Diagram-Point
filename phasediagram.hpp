@@ -10,8 +10,8 @@
 
 #include "cudacomplex.hpp"
 
-#define L 10
-#define nmax 7
+#define L 3
+#define nmax 3
 #define dim (nmax+1)
 
 __host__ __device__ inline int mod(int i) {

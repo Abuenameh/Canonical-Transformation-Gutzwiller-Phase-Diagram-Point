@@ -46,14 +46,14 @@ __global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u) {
 //		scale = sqrt(51 / 2.);
 //	if (k == 2)
 //		scale = sqrt(71 / 2.);
-	x[i] = (1 / sqrt(2.0 * dim));// * (k + n) / scale;
+	x[i] = (1 / sqrt(2.0 * dim)); // * (k + n) / scale;
 	nbd[i] = 0;
 //	l[i] = -100;
 //	u[i] = 100;
 }
 
-__global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u, int j,
-	real dx) {
+__global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u,
+	int j, real dx) {
 	const int i = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (i >= ndim) {
@@ -73,11 +73,13 @@ extern void initProb(int ndim, real* x, int* nbd, real* l, real* u) {
 //	initProbKer<<<1,2*L*dim>>>(x, nbd, l, u);
 }
 
-extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i, real dx) {
-	initProbKer<<<lbfgsbcuda::iDivUp(ndim, 64), 64>>>(ndim, x, nbd, l, u, i, dx);
+extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i,
+	real dx) {
+	initProbKer<<<lbfgsbcuda::iDivUp(ndim, 64), 64>>>(ndim, x, nbd, l, u, i,
+		dx);
 }
 
-__global__ void energyfKer(real* x, real* norm2, Parameters parms,
+__global__ void energyfctKer(real* x, real* norm2, Parameters parms, real theta,
 	doublecomplex* E, Estruct* Es) {
 	int n = blockIdx.x;
 	int i = threadIdx.x;
@@ -96,6 +98,7 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 	__shared__ real U[L];
 	__shared__ real J[L];
 	__shared__ real mu;
+	__shared__ real costh, cos2th;
 	if (i == 0) {
 		for (int j = 0; j < L; j++) {
 			int k = j * dim;
@@ -103,12 +106,13 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 			for (int m = 0; m <= nmax; m++) {
 				f[j][m] = make_doublecomplex(x[2 * (k + m)],
 					x[2 * (k + m) + 1]);
-				printf("f[%d][%d] = %f, %f\n", j, m, f[j][m].real(), f[j][m].imag());
 			}
 			U[j] = parms.U[j];
 			J[j] = parms.J[j];
 		}
 		mu = parms.mu;
+		costh = cos(theta);
+		cos2th = cos(2 * theta);
 	}
 	__syncthreads();
 
@@ -129,17 +133,17 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 	E0 = (0.5 * U[i] * n * (n - 1) - mu * n) * ~f[i][n] * f[i][n];
 
 	if (n < nmax) {
-		E1j1 += -J[j1] * g(n, n + 1) * ~f[i][n + 1] * ~f[j1][n] * f[i][n]
-			* f[j1][n + 1];
-		E1j2 += -J[i] * g(n, n + 1) * ~f[i][n + 1] * ~f[j2][n] * f[i][n]
+		E1j1 += -J[j1] * costh * g(n, n + 1) * ~f[i][n + 1] * ~f[j1][n]
+			* f[i][n] * f[j1][n + 1];
+		E1j2 += -J[i] * costh * g(n, n + 1) * ~f[i][n + 1] * ~f[j2][n] * f[i][n]
 			* f[j2][n + 1];
 
 		if (n > 0) {
-			E2j1 += 0.5 * J[j1] * J[j1] * g(n, n) * g(n - 1, n + 1)
+			E2j1 += 0.5 * J[j1] * J[j1] * cos2th * g(n, n) * g(n - 1, n + 1)
 				* ~f[i][n + 1] * ~f[j1][n - 1] * f[i][n - 1] * f[j1][n + 1]
 				* (1 / eps(U, i, j1, n, n) - 1 / eps(U, i, j1, n - 1, n + 1));
-			E2j2 += 0.5 * J[i] * J[i] * g(n, n) * g(n - 1, n + 1) * ~f[i][n + 1]
-				* ~f[j2][n - 1] * f[i][n - 1] * f[j2][n + 1]
+			E2j2 += 0.5 * J[i] * J[i] * cos2th * g(n, n) * g(n - 1, n + 1)
+				* ~f[i][n + 1] * ~f[j2][n - 1] * f[i][n - 1] * f[j2][n + 1]
 				* (1 / eps(U, i, j2, n, n) - 1 / eps(U, i, j2, n - 1, n + 1));
 		}
 
@@ -185,30 +189,30 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 
 		for (int m = 1; m <= nmax; m++) {
 			if (n != m - 1 && n < nmax) {
-				E5j1j2 += 0.5 * (J[j1] * J[i] / eps(U, i, j1, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m - 1] * ~f[j2][m]
-					* f[i][n + 1] * f[j1][m] * f[j2][m - 1];
-				E5j1j2 += 0.5 * (J[i] * J[j1] / eps(U, i, j2, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m - 1] * ~f[j1][m]
-					* f[i][n + 1] * f[j2][m] * f[j1][m - 1];
-				E5j1k1 += 0.5 * (J[j1] * J[k1] / eps(U, i, j1, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m - 1] * ~f[k1][n]
-					* f[i][n] * f[j1][m - 1] * f[k1][n + 1];
-				E5j2k2 += 0.5 * (J[i] * J[j2] / eps(U, i, j2, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m - 1] * ~f[k2][n]
-					* f[i][n] * f[j2][m - 1] * f[k2][n + 1];
-				E5j1j2 -= 0.5 * (J[j1] * J[i] / eps(U, i, j1, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n] * ~f[j1][m - 1] * ~f[j2][m]
-					* f[i][n] * f[j1][m] * f[j2][m - 1];
-				E5j1j2 -= 0.5 * (J[i] * J[j1] / eps(U, i, j2, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n] * ~f[j2][m - 1] * ~f[j1][m]
-					* f[i][n] * f[j2][m] * f[j1][m - 1];
-				E5j1k1 -= 0.5 * (J[j1] * J[k1] / eps(U, i, j1, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m] * ~f[k1][n]
-					* f[i][n] * f[j1][m] * f[k1][n + 1];
-				E5j2k2 -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n, m)) * g(n, m)
-					* g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m] * ~f[k2][n]
-					* f[i][n] * f[j2][m] * f[k2][n + 1];
+				E5j1j2 += 0.5 * (J[j1] * J[i] * cos2th / eps(U, i, j1, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m - 1]
+					* ~f[j2][m] * f[i][n + 1] * f[j1][m] * f[j2][m - 1];
+				E5j1j2 += 0.5 * (J[i] * J[j1] * cos2th / eps(U, i, j2, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m - 1]
+					* ~f[j1][m] * f[i][n + 1] * f[j2][m] * f[j1][m - 1];
+				E5j1k1 += 0.5 * (J[j1] * J[k1] * cos2th / eps(U, i, j1, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m - 1]
+					* ~f[k1][n] * f[i][n] * f[j1][m - 1] * f[k1][n + 1];
+				E5j2k2 += 0.5 * (J[i] * J[j2] * cos2th / eps(U, i, j2, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m - 1]
+					* ~f[k2][n] * f[i][n] * f[j2][m - 1] * f[k2][n + 1];
+				E5j1j2 -= 0.5 * (J[j1] * J[i] * cos2th / eps(U, i, j1, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n] * ~f[j1][m - 1]
+					* ~f[j2][m] * f[i][n] * f[j1][m] * f[j2][m - 1];
+				E5j1j2 -= 0.5 * (J[i] * J[j1] * cos2th / eps(U, i, j2, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n] * ~f[j2][m - 1]
+					* ~f[j1][m] * f[i][n] * f[j2][m] * f[j1][m - 1];
+				E5j1k1 -= 0.5 * (J[j1] * J[k1] * cos2th / eps(U, i, j1, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j1][m]
+					* ~f[k1][n] * f[i][n] * f[j1][m] * f[k1][n + 1];
+				E5j2k2 -= 0.5 * (J[i] * J[j2] * cos2th / eps(U, i, j2, n, m))
+					* g(n, m) * g(m - 1, n + 1) * ~f[i][n + 1] * ~f[j2][m]
+					* ~f[k2][n] * f[i][n] * f[j2][m] * f[k2][n + 1];
 			}
 		}
 	}
@@ -241,11 +245,12 @@ __global__ void energyfKer(real* x, real* norm2, Parameters parms,
 	atomicAdd(&Es->E5j1k1[i], E5j1k1);
 	atomicAdd(&Es->E5j2k2[i], E5j2k2);
 
-	printf("%d: %f, %f, %f, %f, %f, %f, %f\n", i, E0.real(), E1j1.real(), E1j2.real(), E2j1.real(), E2j2.real(), E3j1.real(), E3j2.real());
-	printf("%d: %f, %f, %f, %f, %f, %f\n", i, E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
+//	printf("%d: %f, %f, %f, %f, %f, %f, %f\n", i, E0.real(), E1j1.real(), E1j2.real(), E2j1.real(), E2j2.real(), E3j1.real(), E3j2.real());
+//	printf("%d: %f, %f, %f, %f, %f, %f\n", i, E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
 }
 
-__global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, real* g_dev) {
+__global__ void energygctKer(real* x, real* norm2, Parameters parms, real theta, Estruct* Es,
+	real* g_dev) {
 	int n = blockIdx.x;
 	int i = threadIdx.x;
 
@@ -263,6 +268,7 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 	__shared__ real U[L];
 	__shared__ real J[L];
 	__shared__ real mu;
+	__shared__ real costh, cos2th;
 	__shared__ doublecomplex E0[L];
 	__shared__ doublecomplex E1j1[L];
 	__shared__ doublecomplex E1j2[L];
@@ -286,6 +292,8 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 			}
 			U[j] = parms.U[j];
 			J[j] = parms.J[j];
+			costh = cos(theta);
+			cos2th = cos(2 * theta);
 			E0[j] = Es->E0[j];
 			E1j1[j] = Es->E1j1[j];
 			E1j2[j] = Es->E1j2[j];
@@ -321,27 +329,31 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 	E0df = (0.5 * U[i] * n * (n - 1) - mu * n) * f[i][n];
 
 	if (n < nmax) {
-		E1j1df += -J[j1] * g(n, n + 1) * ~f[j1][n + 1] * f[j1][n] * f[i][n + 1];
-		E1j2df += -J[i] * g(n, n + 1) * ~f[j2][n + 1] * f[j2][n] * f[i][n + 1];
+		E1j1df += -J[j1] * costh * g(n, n + 1) * ~f[j1][n + 1] * f[j1][n]
+			* f[i][n + 1];
+		E1j2df += -J[i] * costh * g(n, n + 1) * ~f[j2][n + 1] * f[j2][n]
+			* f[i][n + 1];
 	}
 	if (n > 0) {
-		E1j1df += -J[j1] * g(n - 1, n) * ~f[j1][n - 1] * f[j1][n] * f[i][n - 1];
-		E1j2df += -J[i] * g(n - 1, n) * ~f[j2][n - 1] * f[j2][n] * f[i][n - 1];
+		E1j1df += -J[j1] * costh * g(n - 1, n) * ~f[j1][n - 1] * f[j1][n]
+			* f[i][n - 1];
+		E1j2df += -J[i] * costh * g(n - 1, n) * ~f[j2][n - 1] * f[j2][n]
+			* f[i][n - 1];
 	}
 
 	if (n > 1) {
-		E2j1df += 0.5 * J[j1] * J[j1] * g(n - 1, n - 1) * g(n - 2, n)
+		E2j1df += 0.5 * J[j1] * J[j1] * cos2th * g(n - 1, n - 1) * g(n - 2, n)
 			* ~f[j1][n - 2] * f[j1][n] * f[i][n - 2]
 			* (1 / eps(U, i, j1, n - 1, n - 1) - 1 / eps(U, i, j1, n - 2, n));
-		E2j2df += 0.5 * J[i] * J[i] * g(n - 1, n - 1) * g(n - 2, n)
+		E2j2df += 0.5 * J[i] * J[i] * cos2th * g(n - 1, n - 1) * g(n - 2, n)
 			* ~f[j2][n - 2] * f[j2][n] * f[i][n - 2]
 			* (1 / eps(U, i, j2, n - 1, n - 1) - 1 / eps(U, i, j2, n - 2, n));
 	}
 	if (n < nmax - 1) {
-		E2j1df += 0.5 * J[j1] * J[j1] * g(n + 1, n + 1) * g(n, n + 2)
+		E2j1df += 0.5 * J[j1] * J[j1] * cos2th * g(n + 1, n + 1) * g(n, n + 2)
 			* ~f[j1][n + 2] * f[j1][n] * f[i][n + 2]
 			* (1 / eps(U, j1, i, n + 1, n + 1) - 1 / eps(U, j1, i, n, n + 2));
-		E2j2df += 0.5 * J[i] * J[i] * g(n + 1, n + 1) * g(n, n + 2)
+		E2j2df += 0.5 * J[i] * J[i] * cos2th * g(n + 1, n + 1) * g(n, n + 2)
 			* ~f[j2][n + 2] * f[j2][n] * f[i][n + 2]
 			* (1 / eps(U, j2, i, n + 1, n + 1) - 1 / eps(U, j2, i, n, n + 2));
 	}
@@ -456,44 +468,56 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 		if (n != m) {
 			if (n > 0) {
 				if (m > 0) {
-					E5j1j2df += 0.5 * (J[j1] * J[i] / eps(U, i, j1, n - 1, m))
+					E5j1j2df += 0.5
+						* (J[j1] * J[i] * cos2th / eps(U, i, j1, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j1][m - 1] * ~f[j2][m]
 						* f[j1][m] * f[j2][m - 1] * f[i][n];
-					E5j1j2df += 0.5 * (J[i] * J[j1] / eps(U, i, j2, n - 1, m))
+					E5j1j2df += 0.5
+						* (J[i] * J[j1] * cos2th / eps(U, i, j2, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j2][m - 1] * ~f[j1][m]
 						* f[j2][m] * f[j1][m - 1] * f[i][n];
-					E5j1k1df += 0.5 * (J[j1] * J[k1] / eps(U, i, j1, n - 1, m))
+					E5j1k1df += 0.5
+						* (J[j1] * J[k1] * cos2th / eps(U, i, j1, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j1][m - 1]
 						* ~f[k1][n - 1] * f[j1][m - 1] * f[k1][n] * f[i][n - 1];
-					E5j2k2df += 0.5 * (J[i] * J[j2] / eps(U, i, j2, n - 1, m))
+					E5j2k2df += 0.5
+						* (J[i] * J[j2] * cos2th / eps(U, i, j2, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j2][m - 1]
 						* ~f[k2][n - 1] * f[j2][m - 1] * f[k2][n] * f[i][n - 1];
-					E5j1k1df -= 0.5 * (J[j1] * J[k1] / eps(U, i, j1, n - 1, m))
+					E5j1k1df -= 0.5
+						* (J[j1] * J[k1] * cos2th / eps(U, i, j1, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j1][m] * ~f[k1][n - 1]
 						* f[j1][m] * f[k1][n] * f[i][n - 1];
-					E5j2k2df -= 0.5 * (J[i] * J[j2] / eps(U, i, j2, n - 1, m))
+					E5j2k2df -= 0.5
+						* (J[i] * J[j2] * cos2th / eps(U, i, j2, n - 1, m))
 						* g(n - 1, m) * g(m - 1, n) * ~f[j2][m] * ~f[k2][n - 1]
 						* f[j2][m] * f[k2][n] * f[i][n - 1];
 				}
 			}
 			if (n < nmax) {
 				if (m < nmax) {
-					E5j1k1df += 0.5 * (J[j1] * J[k1] / eps(U, j1, i, m, n + 1))
+					E5j1k1df += 0.5
+						* (J[j1] * J[k1] * cos2th / eps(U, j1, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j1][m + 1]
 						* ~f[k1][n + 1] * f[j1][m + 1] * f[k1][n] * f[i][n + 1];
-					E5j2k2df += 0.5 * (J[i] * J[j2] / eps(U, j2, i, m, n + 1))
+					E5j2k2df += 0.5
+						* (J[i] * J[j2] * cos2th / eps(U, j2, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j2][m + 1]
 						* ~f[k2][n + 1] * f[j2][m + 1] * f[k2][n] * f[i][n + 1];
-					E5j1j2df += 0.5 * (J[j1] * J[i] / eps(U, j1, i, m, n + 1))
+					E5j1j2df += 0.5
+						* (J[j1] * J[i] * cos2th / eps(U, j1, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j1][m + 1] * ~f[j2][m]
 						* f[j1][m] * f[j2][m + 1] * f[i][n];
-					E5j1j2df += 0.5 * (J[i] * J[j1] / eps(U, j2, i, m, n + 1))
+					E5j1j2df += 0.5
+						* (J[i] * J[j1] * cos2th / eps(U, j2, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j2][m + 1] * ~f[j1][m]
 						* f[j2][m] * f[j1][m + 1] * f[i][n];
-					E5j1k1df -= 0.5 * (J[j1] * J[k1] / eps(U, j1, i, m, n + 1))
+					E5j1k1df -= 0.5
+						* (J[j1] * J[k1] * cos2th / eps(U, j1, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j1][m] * ~f[k1][n + 1]
 						* f[j1][m] * f[k1][n] * f[i][n + 1];
-					E5j2k2df -= 0.5 * (J[i] * J[j2] / eps(U, j2, i, m, n + 1))
+					E5j2k2df -= 0.5
+						* (J[i] * J[j2] * cos2th / eps(U, j2, i, m, n + 1))
 						* g(m, n + 1) * g(n, m + 1) * ~f[j2][m] * ~f[k2][n + 1]
 						* f[j2][m] * f[k2][n] * f[i][n + 1];
 				}
@@ -501,25 +525,29 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 		}
 		if (n != m + 1) {
 			if (m < nmax) {
-				E5j1j2df -= 0.5 * (J[j1] * J[i] / eps(U, j1, i, m, n)) * g(m, n)
-					* g(n - 1, m + 1) * ~f[j1][m + 1] * ~f[j2][m] * f[j1][m]
-					* f[j2][m + 1] * f[i][n];
-				E5j1j2df -= 0.5 * (J[i] * J[j1] / eps(U, j2, i, m, n)) * g(m, n)
-					* g(n - 1, m + 1) * ~f[j2][m + 1] * ~f[j1][m] * f[j2][m]
-					* f[j1][m + 1] * f[i][n];
+				E5j1j2df -= 0.5 * (J[j1] * J[i] * cos2th / eps(U, j1, i, m, n))
+					* g(m, n) * g(n - 1, m + 1) * ~f[j1][m + 1] * ~f[j2][m]
+					* f[j1][m] * f[j2][m + 1] * f[i][n];
+				E5j1j2df -= 0.5 * (J[i] * J[j1] * cos2th / eps(U, j2, i, m, n))
+					* g(m, n) * g(n - 1, m + 1) * ~f[j2][m + 1] * ~f[j1][m]
+					* f[j2][m] * f[j1][m + 1] * f[i][n];
 			}
 			if (n > 0) {
 				if (m < nmax) {
-					E5j1k1df += 0.5 * (J[k1] * J[j1] / eps(U, j1, k1, m, n))
+					E5j1k1df += 0.5
+						* (J[k1] * J[j1] * cos2th / eps(U, j1, k1, m, n))
 						* g(m, n) * g(n - 1, m + 1) * ~f[j1][m + 1]
 						* ~f[k1][n - 1] * f[j1][m + 1] * f[k1][n] * f[i][n - 1];
-					E5j2k2df += 0.5 * (J[j2] * J[i] / eps(U, j2, k2, m, n))
+					E5j2k2df += 0.5
+						* (J[j2] * J[i] * cos2th / eps(U, j2, k2, m, n))
 						* g(m, n) * g(n - 1, m + 1) * ~f[j2][m + 1]
 						* ~f[k2][n - 1] * f[j2][m + 1] * f[k2][n] * f[i][n - 1];
-					E5j1k1df -= 0.5 * (J[k1] * J[j1] / eps(U, j1, k1, m, n))
+					E5j1k1df -= 0.5
+						* (J[k1] * J[j1] * cos2th / eps(U, j1, k1, m, n))
 						* g(m, n) * g(n - 1, m + 1) * ~f[j1][m] * ~f[k1][n - 1]
 						* f[j1][m] * f[k1][n] * f[i][n - 1];
-					E5j2k2df -= 0.5 * (J[j2] * J[i] / eps(U, j2, k2, m, n))
+					E5j2k2df -= 0.5
+						* (J[j2] * J[i] * cos2th / eps(U, j2, k2, m, n))
 						* g(m, n) * g(n - 1, m + 1) * ~f[j2][m] * ~f[k2][n - 1]
 						* f[j2][m] * f[k2][n] * f[i][n - 1];
 				}
@@ -528,23 +556,28 @@ __global__ void energygKer(real* x, real* norm2, Parameters parms, Estruct* Es, 
 		if (n != m - 1) {
 			if (n < nmax) {
 				if (m > 0) {
-					E5j1k1df += 0.5 * (J[k1] * J[j1] / eps(U, k1, j1, n, m))
+					E5j1k1df += 0.5
+						* (J[k1] * J[j1] * cos2th / eps(U, k1, j1, n, m))
 						* g(n, m) * g(m - 1, n + 1) * ~f[k1][n + 1]
 						* ~f[j1][m - 1] * f[k1][n] * f[j1][m - 1] * f[i][n + 1];
-					E5j2k2df += 0.5 * (J[j2] * J[i] / eps(U, k2, j2, n, m))
+					E5j2k2df += 0.5
+						* (J[j2] * J[i] * cos2th / eps(U, k2, j2, n, m))
 						* g(n, m) * g(m - 1, n + 1) * ~f[k2][n + 1]
 						* ~f[j2][m - 1] * f[k2][n] * f[j2][m - 1] * f[i][n + 1];
-					E5j1j2df -= 0.5 * (J[j1] * J[i] / eps(U, i, j1, n, m))
+					E5j1j2df -= 0.5
+						* (J[j1] * J[i] * cos2th / eps(U, i, j1, n, m))
 						* g(n, m) * g(m - 1, n + 1) * ~f[j1][m - 1] * ~f[j2][m]
 						* f[j1][m] * f[j2][m - 1] * f[i][n];
-					E5j1j2df -= 0.5 * (J[i] * J[j1] / eps(U, i, j2, n, m))
+					E5j1j2df -= 0.5
+						* (J[i] * J[j1] * cos2th / eps(U, i, j2, n, m))
 						* g(n, m) * g(m - 1, n + 1) * ~f[j2][m - 1] * ~f[j1][m]
 						* f[j2][m] * f[j1][m - 1] * f[i][n];
 				}
-				E5j1k1df -= 0.5 * (J[k1] * J[j1] / eps(U, k1, j1, n, m))
-					* g(n, m) * g(m - 1, n + 1) * ~f[k1][n + 1] * ~f[j1][m]
-					* f[k1][n] * f[j1][m] * f[i][n + 1];
-				E5j2k2df -= 0.5 * (J[j2] * J[i] / eps(U, k2, j2, n, m))
+				E5j1k1df -= 0.5
+					* (J[k1] * J[j1] * cos2th / eps(U, k1, j1, n, m)) * g(n, m)
+					* g(m - 1, n + 1) * ~f[k1][n + 1] * ~f[j1][m] * f[k1][n]
+					* f[j1][m] * f[i][n + 1];
+				E5j2k2df -= 0.5 * (J[j2] * J[i] * cos2th / eps(U, k2, j2, n, m))
 					* g(n, m) * g(m - 1, n + 1) * ~f[k2][n + 1] * ~f[j2][m]
 					* f[k2][n] * f[j2][m] * f[i][n + 1];
 			}
@@ -706,7 +739,8 @@ void freeWorkspace(Workspace& work) {
 	memFree(work.norm2);
 }
 
-void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, Workspace& work) {
+void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta, Estruct* Es,
+	Workspace& work) {
 
 	doublecomplex* E_dev;
 	CudaSafeMemAllocCall(memAlloc<doublecomplex>(&E_dev, 1));
@@ -718,16 +752,16 @@ void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, Estruct* Es, W
 
 	norm2Ker<<<1, L>>>(x, work.norm2);
 	CudaCheckError();
-	energyfKer<<<dim, L>>>(x, work.norm2, /*U, J, mu,*/parms, E_dev, Es);
+	energyfctKer<<<dim, L>>>(x, work.norm2, parms, theta, E_dev, Es);
 	CudaCheckError();
-	copyfker<<<1,1>>>(E_dev, f_dev);
+	copyfker<<<1, 1>>>(E_dev, f_dev);
 	CudaCheckError();
-	energygKer<<<dim, L>>>(x, work.norm2, parms, Es,g_dev /*U, J, mu,*/);
+	energygctKer<<<dim, L>>>(x, work.norm2, parms, theta, Es, g_dev);
 	CudaCheckError();
 
 	doublecomplex E;
 	memCopy(&E, E_dev, sizeof(doublecomplex), cudaMemcpyDeviceToHost);
-	printf("E = %f, %f\n", E.real(), E.imag());
+//	printf("E = %f, %f\n", E.real(), E.imag());
 	real* g_host = new real[2 * L * dim];
 	memCopy(g_host, g_dev, 2 * L * dim * sizeof(real), cudaMemcpyDeviceToHost);
 //	printf("g: ");
