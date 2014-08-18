@@ -29,6 +29,7 @@ real U;
 real J;
 real mu;
 real theta;
+bool ct;
 
 Estruct* Es;
 Workspace work;
@@ -39,10 +40,10 @@ extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i,
 	real dx);
 
 void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta,
-	Estruct* Es, Workspace& work);
+	Estruct* Es, Workspace& work, bool ct);
 
 void funcgrad(real* x, real& f, real* g, const cudaStream_t& stream) {
-	energy(x, f_tb_dev, g, parms, theta, Es, work);
+	energy(x, f_tb_dev, g, parms, theta, Es, work, ct);
 	f = *f_tb_host;
 //	printf("f_tb_host: %f\n", *f_tb_host);
 }
@@ -76,7 +77,6 @@ int main() {
 	CudaSafeMemAllocCall(memAlloc<int>(&nbd, ndim));
 	CudaSafeMemAllocCall(memAlloc<real>(&l, ndim));
 	CudaSafeMemAllocCall(memAlloc<real>(&u, ndim));
-//	printf("Here\n");
 	CudaSafeMemAllocCall(
 		memAllocHost<real>(&f_tb_host, &f_tb_dev, sizeof(real)));
 
@@ -122,6 +122,23 @@ int main() {
 	parms.mu = mu;
 
 	theta = 0;
+
+//	real* g;
+//	memAlloc<real>(&g, ndim);
+//	initProb(ndim, x, nbd, l, u);
+//	energy(x, f_tb_host, g, parms, theta, Es, work, false);
+//	real f1 = *f_tb_host;
+//	vector<real> g_host(ndim);
+//	memCopy(g_host.data(), g, ndim*sizeof(real), cudaMemcpyDeviceToHost);
+//	printf("g: ");
+//	for(int i = 0; i < ndim; i++) {
+//		printf("%f, ", g_host[i]);
+//	}
+//	printf("\n");
+//	initProb(ndim, x, nbd, l, u, 6, 1e-7);
+//	energy(x, f_tb_host, g, parms, theta, Es, work, false);
+//	real f2 = *f_tb_host;
+//	printf("f2-f1 = %e\n", f2-f1);
 
 	lbfgsbminimize(ndim, 4, x, epsg, epsf, epsx, maxits, nbd, l, u, info);
 	printf("info: %d\n", info);

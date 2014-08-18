@@ -37,9 +37,9 @@ __global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u) {
 	}
 
 //	x[i] = 1 / sqrt(2.0 * dim);
-	real scale = 1;
-	int k = i / (2 * dim);
-	int n = i % (2 * dim);
+//	real scale = 1;
+//	int k = i / (2 * dim);
+//	int n = i % (2 * dim);
 //	if (k == 0)
 //		scale = sqrt(35 / 2.);
 //	if (k == 1)
@@ -60,9 +60,9 @@ __global__ void initProbKer(int ndim, real* x, int* nbd, real* l, real* u,
 		return;
 	}
 
-	int k = i / (2 * dim);
-	int n = i % (2 * dim);
-	x[i] = (1 / sqrt(2.0 * dim)) * (k + n);
+//	int k = i / (2 * dim);
+//	int n = i % (2 * dim);
+	x[i] = (1 / sqrt(2.0 * dim));// * (k + n);
 	nbd[i] = 0;
 	if (i == j)
 		x[j] += dx;
@@ -77,6 +77,144 @@ extern void initProb(int ndim, real* x, int* nbd, real* l, real* u, int i,
 	real dx) {
 	initProbKer<<<lbfgsbcuda::iDivUp(ndim, 64), 64>>>(ndim, x, nbd, l, u, i,
 		dx);
+}
+
+__global__ void energyfKer(real* x, real* norm2, Parameters parms, real theta,
+	doublecomplex* E, Estruct* Es) {
+	int n = blockIdx.x;
+	int i = threadIdx.x;
+
+	if (n > nmax || i >= L) {
+		return;
+	}
+
+	int j1 = mod(i - 1);
+	int j2 = mod(i + 1);
+
+	__shared__ doublecomplex fi[L * dim];
+	__shared__ doublecomplex* f[L];
+	__shared__ real U[L];
+	__shared__ real J[L];
+	__shared__ real mu;
+	__shared__ real costh;
+	if (i == 0) {
+		for (int j = 0; j < L; j++) {
+			int k = j * dim;
+			f[j] = &fi[k];
+			for (int m = 0; m <= nmax; m++) {
+				f[j][m] = make_doublecomplex(x[2 * (k + m)],
+					x[2 * (k + m) + 1]);
+			}
+			U[j] = parms.U[j];
+			J[j] = parms.J[j];
+		}
+		mu = parms.mu;
+		costh = cos(theta);
+	}
+	__syncthreads();
+
+	doublecomplex E0 = doublecomplex::zero();
+	doublecomplex E1j1 = doublecomplex::zero();
+	doublecomplex E1j2 = doublecomplex::zero();
+
+	E0 = (0.5 * U[i] * n * (n - 1) - mu * n) * ~f[i][n] * f[i][n];
+
+	if (n < nmax) {
+		for (int m = 1; m <= nmax; m++) {
+			E1j1 += -J[j1] * costh * g(n, m) * ~f[i][n + 1] * ~f[j1][m - 1]
+				* f[i][n] * f[j1][m];
+			E1j2 += -J[i] * costh * g(n, m) * ~f[i][n + 1] * ~f[j2][m - 1]
+				* f[i][n] * f[j2][m];
+		}
+	}
+
+	atomicAdd(E, E0 / norm2[i]);
+	atomicAdd(E, E1j1 / (norm2[i] * norm2[j1]));
+	atomicAdd(E, E1j2 / (norm2[i] * norm2[j2]));
+
+	atomicAdd(&Es->E0[i], E0);
+	atomicAdd(&Es->E1j1[i], E1j1);
+	atomicAdd(&Es->E1j2[i], E1j2);
+
+}
+
+__global__ void energygKer(real* x, real* norm2, Parameters parms, real theta,
+	Estruct* Es, real* g_dev) {
+	int n = blockIdx.x;
+	int i = threadIdx.x;
+
+	if (n > nmax || i >= L) {
+		return;
+	}
+
+	int j1 = mod(i - 1);
+	int j2 = mod(i + 1);
+
+	__shared__ doublecomplex fi[L * dim];
+	__shared__ doublecomplex* f[L];
+	__shared__ real U[L];
+	__shared__ real J[L];
+	__shared__ real mu;
+	__shared__ real costh;
+	__shared__ doublecomplex E0[L];
+	__shared__ doublecomplex E1j1[L];
+	__shared__ doublecomplex E1j2[L];
+	if (i == 0) {
+		for (int j = 0; j < L; j++) {
+			int k = j * dim;
+			f[j] = &fi[k];
+			for (int m = 0; m <= nmax; m++) {
+				f[j][m] = make_doublecomplex(x[2 * (k + m)],
+					x[2 * (k + m) + 1]);
+			}
+			U[j] = parms.U[j];
+			J[j] = parms.J[j];
+			costh = cos(theta);
+			E0[j] = Es->E0[j];
+			E1j1[j] = Es->E1j1[j];
+			E1j2[j] = Es->E1j2[j];
+		}
+		mu = parms.mu;
+	}
+	__syncthreads();
+
+	doublecomplex E0df = doublecomplex::zero();
+	doublecomplex E1j1df = doublecomplex::zero();
+	doublecomplex E1j2df = doublecomplex::zero();
+
+	E0df = (0.5 * U[i] * n * (n - 1) - mu * n) * f[i][n];
+
+	if (n < nmax) {
+		for (int m = 0; m < nmax; m++) {
+			E1j1df += -J[j1] * costh * g(n, m + 1) * ~f[j1][m + 1] * f[j1][m]
+				* f[i][n + 1];
+			E1j2df += -J[i] * costh * g(n, m + 1) * ~f[j2][m + 1] * f[j2][m]
+				* f[i][n + 1];
+		}
+	}
+	if (n > 0) {
+		for (int m = 1; m <= nmax; m++) {
+			E1j1df += -J[j1] * costh * g(n - 1, m) * ~f[j1][m - 1] * f[j1][m]
+				* f[i][n - 1];
+			E1j2df += -J[i] * costh * g(n - 1, m) * ~f[j2][m - 1] * f[j2][m]
+				* f[i][n - 1];
+		}
+	}
+
+	doublecomplex Edf = doublecomplex::zero();
+
+	Edf += (E0df * norm2[i] - E0[i] * f[i][n]) / (norm2[i] * norm2[i]);
+
+	Edf += (E1j1df * norm2[i] * norm2[j1]
+		- 1 * (E1j1[i] + E1j2[j1]) * f[i][n] * norm2[j1])
+		/ (norm2[i] * norm2[i] * norm2[j1] * norm2[j1]);
+	Edf += (E1j2df * norm2[i] * norm2[j2]
+		- 1 * (E1j2[i] + E1j1[j2]) * f[i][n] * norm2[j2])
+		/ (norm2[i] * norm2[i] * norm2[j2] * norm2[j2]);
+
+	int k = i * dim + n;
+	g_dev[2 * k] = 2 * Edf.real();
+	g_dev[2 * k + 1] = 2 * Edf.imag();
 }
 
 __global__ void energyfctKer(real* x, real* norm2, Parameters parms, real theta,
@@ -249,8 +387,8 @@ __global__ void energyfctKer(real* x, real* norm2, Parameters parms, real theta,
 //	printf("%d: %f, %f, %f, %f, %f, %f\n", i, E4j1j2.real(), E4j1k1.real(), E4j2k2.real(), E5j1j2.real(), E5j1k1.real(), E5j2k2.real());
 }
 
-__global__ void energygctKer(real* x, real* norm2, Parameters parms, real theta, Estruct* Es,
-	real* g_dev) {
+__global__ void energygctKer(real* x, real* norm2, Parameters parms, real theta,
+	Estruct* Es, real* g_dev) {
 	int n = blockIdx.x;
 	int i = threadIdx.x;
 
@@ -739,8 +877,8 @@ void freeWorkspace(Workspace& work) {
 	memFree(work.norm2);
 }
 
-void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta, Estruct* Es,
-	Workspace& work) {
+void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta,
+	Estruct* Es, Workspace& work, bool ct) {
 
 	doublecomplex* E_dev;
 	CudaSafeMemAllocCall(memAlloc<doublecomplex>(&E_dev, 1));
@@ -752,11 +890,17 @@ void energy(real* x, real* f_dev, real* g_dev, Parameters& parms, real theta, Es
 
 	norm2Ker<<<1, L>>>(x, work.norm2);
 	CudaCheckError();
-	energyfctKer<<<dim, L>>>(x, work.norm2, parms, theta, E_dev, Es);
+	if (ct)
+		energyfctKer<<<dim, L>>>(x, work.norm2, parms, theta, E_dev, Es);
+	else
+		energyfKer<<<dim, L>>>(x, work.norm2, parms, theta, E_dev, Es);
 	CudaCheckError();
 	copyfker<<<1, 1>>>(E_dev, f_dev);
 	CudaCheckError();
-	energygctKer<<<dim, L>>>(x, work.norm2, parms, theta, Es, g_dev);
+	if (ct)
+		energygctKer<<<dim, L>>>(x, work.norm2, parms, theta, Es, g_dev);
+	else
+		energygKer<<<dim, L>>>(x, work.norm2, parms, theta, Es, g_dev);
 	CudaCheckError();
 
 	doublecomplex E;
